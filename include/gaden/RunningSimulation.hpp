@@ -11,6 +11,7 @@ namespace gaden
         struct Parameters
         {
             std::shared_ptr<GasSource> source = std::make_shared<PointSource>();
+            std::vector<std::shared_ptr<GasSource>> sources;
 
             float deltaTime = 0.1;                // seconds
             float windIterationDeltaTime = 1.0;   // seconds
@@ -43,6 +44,9 @@ namespace gaden
         const std::vector<Filament>& GetFilaments() const override;
         float GetCurrentTime() { return currentTime; }
         const Parameters& GetParameters() { return parameters; }
+        size_t GetSourceCount() const;
+        bool SetSourceEnabled(size_t index, bool enabled);
+        bool GetSourceEnabled(size_t index) const;
 
         Vector3 SampleWind(const Vector3i& indices) const override;
 
@@ -77,7 +81,8 @@ namespace gaden
         float lastSaveTime = -FLT_MAX;
         float lastWindUpdateTime = 0.0;
 
-        float releaseAccumulator = 0.0; // to handle non-integer values of numFilaments_iteration over multiple iterations
+        std::vector<float> releaseAccumulators;
+        std::vector<bool> sourceEnabled; // to handle non-integer values of numFilaments_iteration over multiple iterations
 
         size_t last_saved_step = 0;
         std::vector<uint8_t> rawBuffer;

@@ -31,8 +31,27 @@ namespace gaden
         activeFilaments = &filaments1;
         auxFilamentsVector = &filaments2;
 
-        simulationMetadata.source = params.source;
-        GADEN_VERIFY(simulationMetadata.source->gasType != GasType::unknown, "Gas type is set to 'unknown'! Have you initialized the parameters?");
+        if (parameters.sources.empty())
+        {
+            parameters.sources.push_back(parameters.source);
+        }
+
+        parameters.source = parameters.sources.front();
+        simulationMetadata.source = parameters.source;
+
+        sourceEnabled.assign(parameters.sources.size(), true);
+        releaseAccumulators.assign(parameters.sources.size(), 0.0f);
+
+        for (const auto& gasSource : parameters.sources)
+        {
+            GADEN_VERIFY(
+                gasSource != nullptr,
+                "A gas source is null!");
+
+            GADEN_VERIFY(
+                gasSource->gasType != GasType::unknown,
+                "Gas type is set to 'unknown'! Have you initialized the parameters?");
+        }
 
         // calculate the filament->concentration constants
         //-------------------------------------------------
@@ -108,6 +127,32 @@ namespace gaden
         return *activeFilaments;
     }
 
+    size_t RunningSimulation::GetSourceCount() const
+    {
+        return parameters.sources.size();
+    }
+
+    bool RunningSimulation::SetSourceEnabled(size_t index, bool enabled)
+    {
+        if (index >= sourceEnabled.size())
+        {
+            return false;
+        }
+
+        sourceEnabled[index] = enabled;
+        return true;
+    }
+
+    bool RunningSimulation::GetSourceEnabled(size_t index) const
+    {
+        if (index >= sourceEnabled.size())
+        {
+            return false;
+        }
+
+        return sourceEnabled[index];
+    }
+
     Vector3 RunningSimulation::SampleWind(const Vector3i& indices) const
     {
         size_t cellIndex = config->environment.indexFrom3D(indices);
@@ -118,28 +163,57 @@ namespace gaden
     void RunningSimulation::AddFilaments()
     {
         ZoneScoped;
-        float numFilaments_iteration = parameters.numFilaments_sec * parameters.deltaTime;
 
-        releaseAccumulator += numFilaments_iteration;
+        float numFilaments_iteration =
+            parameters.numFilaments_sec * parameters.deltaTime;
 
-        for (size_t i = 0; i < std::floor(releaseAccumulator); i++)
+        // Process each gas source independently.
+        for (size_t sourceIndex = 0;
+             sourceIndex < parameters.sources.size();
+             ++sourceIndex)
         {
-            constexpr size_t safetyLimit = 10;
-            size_t attempts = 0;
-
-            Vector3 position;
-            do
+            // Do not emit gas from a disabled source.
+            // Reset its accumulator to prevent a burst when re-enabled.
+            if (!sourceEnabled[sourceIndex])
             {
-                position = simulationMetadata.source->Emit();
-                attempts++;
-            } while (!config->environment.IsInBounds(position) && attempts < safetyLimit);
+                releaseAccumulators[sourceIndex] = 0.0f;
+                continue;
+            }
 
-            GADEN_VERIFY(attempts < safetyLimit, "Could not spawn filaments around source position! Is it inside the environment bounds?");
+            // Accumulate the number of filaments to release.
+            releaseAccumulators[sourceIndex] += numFilaments_iteration;
 
-            activeFilaments->emplace_back(position, parameters.filamentInitialSigma);
+            for (size_t i = 0;
+                 i < std::floor(releaseAccumulators[sourceIndex]);
+                 ++i)
+            {
+                constexpr size_t safetyLimit = 10;
+                size_t attempts = 0;
+
+                Vector3 position;
+
+                do
+                {
+                    position = parameters.sources[sourceIndex]->Emit();
+                    attempts++;
+                }
+                while (!config->environment.IsInBounds(position)
+                       && attempts < safetyLimit);
+
+                GADEN_VERIFY(
+                    attempts < safetyLimit,
+                    "Could not spawn filaments around source position! "
+                    "Is it inside the environment bounds?");
+
+                activeFilaments->emplace_back(
+                    position,
+                    parameters.filamentInitialSigma);
+            }
+
+            // Preserve the fractional remainder for the next timestep.
+            releaseAccumulators[sourceIndex] -=
+                std::floor(releaseAccumulators[sourceIndex]);
         }
-
-        releaseAccumulator = releaseAccumulator - std::floor(releaseAccumulator);
     }
 
     void RunningSimulation::MoveFilaments()
@@ -459,13 +533,40 @@ namespace gaden
 
             saveDataDirectory = path.parent_path() / "result";
 
-            if (!yaml["source"])
+            sources.clear();
+
+        if (yaml["sources"] && yaml["sources"].IsSequence())
+        {
+            for (const auto& sourceNode : yaml["sources"])
             {
-                source = std::make_shared<PointSource>();
-                GADEN_ERROR("Yaml does not include a source object! Creating a default point source at (0,0,0)");
+               sources.push_back(GasSource::ParseYAML(sourceNode));
+            }
+
+            if (sources.empty())
+            {
+               source = std::make_shared<PointSource>();
+               sources.push_back(source);
+
+               GADEN_ERROR("The sources list is empty! Creating a default point source.");
             }
             else
-                source = GasSource::ParseYAML(yaml["source"]);
+            {
+               source = sources.front();
+            }
+        }
+        else if (yaml["source"])
+        {
+           // Backward compatibility with existing single-source scenarios.
+           source = GasSource::ParseYAML(yaml["source"]);
+           sources.push_back(source);
+        }
+        else
+        {
+           source = std::make_shared<PointSource>();
+           sources.push_back(source);
+
+           GADEN_ERROR("Yaml does not include a source or sources object! Creating a default point source at (0,0,0)");
+        }
 
             // clang-format off
             FromYAML<float>     (yaml, "deltaTime",                 deltaTime);
@@ -498,8 +599,24 @@ namespace gaden
         {
             YAML::Emitter emitter;
             emitter << YAML::BeginMap;
-            emitter << YAML::Key << "source" << YAML::Value;
-            GasSource::WriteYAML(emitter, source);
+            if (sources.size() > 1)
+            {
+                emitter << YAML::Key << "sources" << YAML::Value << YAML::BeginSeq;
+
+                for (const auto& gasSource : sources)
+                {
+                    GasSource::WriteYAML(emitter, gasSource);
+                }
+
+                emitter << YAML::EndSeq;
+            }
+            else
+            {
+                emitter << YAML::Key << "source" << YAML::Value;
+                GasSource::WriteYAML(
+                    emitter,
+                    sources.empty() ? source : sources.front());
+            }
 
             // clang-format off
             emitter << YAML::Key << "deltaTime"                 << YAML::Value << deltaTime;
