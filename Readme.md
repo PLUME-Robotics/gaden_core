@@ -31,10 +31,10 @@ git clone --recursive git@github.com:MAPIRlab/gaden_core.git
 You can then build the project as follows:
 ```
 mkdir build
-cd build 
+cd build
 cmake ..
-make 
-``` 
+make
+```
 
 ### Usage in a CMake project
 You can use gaden in a C++ project with CMake as follows:
@@ -70,3 +70,89 @@ sudo ln -s $(llvm-config --prefix)/lib/libclang.so.1 $(llvm-config --prefix)/lib
 
 ### Usage example
 See [this folder](examples/pythonAPI/Readme.md).
+---
+
+PLUME Robotics Extension — Multi-Source Support
+
+This repository is the PLUME Robotics fork of [MAPIRlab GADEN Core](https://github.com/MAPIRlab/gaden_core).
+
+The PLUME development branch is:
+
+```text
+plume/multi-source
+```
+
+The extension adds support for multiple independently controlled gas sources while retaining compatibility with the original single-source simulation configuration.
+
+## Multi-Source Simulation Configuration
+
+The original single-source configuration uses:
+
+```yaml
+source:
+  sourceType: point
+  position: [0.0, 0.0, 1.0]
+  gasType: 0
+```
+
+The PLUME extension introduces a `sources` list:
+
+```yaml
+sources:
+  - sourceType: point
+    position: [-1.25, 0.0, 0.97]
+    gasType: 0
+
+  - sourceType: point
+    position: [1.25, 0.0, 0.97]
+    gasType: 0
+```
+
+Each source has its own:
+
+- Source type.
+- Position.
+- Gas type.
+- Emission accumulator.
+- Enabled or disabled state.
+
+This allows multiple gas sources to be simulated independently within the same environment.
+
+## Source Enable and Disable API
+
+The Core library provides:
+
+```cpp
+SetSourceEnabled(index, enabled);
+```
+
+The function enables or disables an individual source using its index.
+
+For the PLUME pipe-inspection scenario:
+
+| Source index | Source |
+|---|---|
+| 0 | Left gas source |
+| 1 | Right gas source |
+
+The GADEN ROS 2 simulator uses this functionality to control the two sources according to the valve states received from the ROS 2 valve controller.
+
+## Backward Compatibility
+
+The original singular `source:` configuration remains supported.
+
+Existing GADEN configurations using a single source can therefore continue to use the original format, while new configurations can define multiple sources using `sources:`.
+
+## Integration with PLUME Robotics
+
+The Core library is included as a nested Git submodule in the PLUME GADEN fork.
+
+The corresponding GADEN repository uses this multi-source implementation to connect the simulated pipe valves to the gas-source enable states.
+
+For the complete integration and execution instructions, refer to the [PLUME Simulation repository](https://github.com/PLUME-Robotics/Simulation).
+
+---
+
+**PLUME fork:** https://github.com/PLUME-Robotics/gaden_core
+**Development branch:** `plume/multi-source`
+**Multi-source implementation commit:** `eb8787dd66bf78f7769f07aeee941bed1d8b3b1e`
